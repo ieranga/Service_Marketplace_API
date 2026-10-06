@@ -1,0 +1,233 @@
+@Service_Marketplace_API_HostAddress = http://localhost:5257
+
+### ==============================================
+### AUTHENTICATION & ADMIN ROLES
+### ==============================================
+
+### 1. Register Normal User (Kamal Perera - Role 1)
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Kamal Perera",
+  "email": "kamal.perera@example.com",
+  "phoneNumber": "+94771234567",
+  "password": "Password123!",
+  "nic": "199012345678",
+  "city": "Negombo",
+  "address": "123 Main Street, Negombo"
+}
+
+### 2. Login Normal User (Role 1)
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "kamal.perera@example.com",
+  "password": "Password123!"
+}
+
+### 3. Login Super Admin (ishara11626@gmail.com - Role 3)
+# @name superAdminLogin
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "ishara11626@gmail.com",
+  "password": "SuperAdmin123!"
+}
+
+### 4. Create New Admin User (Role 2) - By Super Admin Only
+# Copy the token from superAdminLogin response into Authorization header:
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/createAdmin
+Content-Type: application/json
+Authorization: Bearer {{superAdminLogin.response.body.data.token}}
+
+{
+  "fullName": "Nishan Fernando",
+  "email": "nishan.admin@marketplace.lk",
+  "phoneNumber": "+94711122334",
+  "password": "AdminPassword123!",
+  "nic": "199211223344",
+  "department": "Trust & Safety"
+}
+
+### 5. Login Created Admin (Role 2)
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "nishan.admin@marketplace.lk",
+  "password": "AdminPassword123!"
+}
+
+### 6. Get All Users (Super Admin, Admins, and Users)
+GET {{Service_Marketplace_API_HostAddress}}/api/auth/getAllUsers
+Accept: application/json
+
+
+### ==============================================
+### MARKETPLACE CATALOG & LISTINGS ENDPOINTS
+### ==============================================
+
+### 7. Get Full Marketplace Catalog (Category -> Service -> Variant)
+GET {{Service_Marketplace_API_HostAddress}}/api/marketplace/catalog
+Accept: application/json
+
+### 8. Get Active Categories
+GET {{Service_Marketplace_API_HostAddress}}/api/marketplace/categories
+Accept: application/json
+
+### 9. Get All Tags
+GET {{Service_Marketplace_API_HostAddress}}/api/marketplace/tags
+Accept: application/json
+
+### 10. Search Provider Service Listings (All Active)
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/services
+Accept: application/json
+
+### 11. Search Provider Listings by Location (Negombo)
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/services?location=Negombo
+Accept: application/json
+
+### 12. Search Provider Listings by Keyword (Car Wash in Negombo)
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/services?location=Negombo&searchTerm=wash
+Accept: application/json
+
+
+### ==============================================
+### AI SERVICE DISCOVERY & MATCHING (GEMINI AI)
+### ==============================================
+
+### 13. AI Discovery: Car Washing at Home in Negombo (Weekend)
+POST {{Service_Marketplace_API_HostAddress}}/api/ai/service-discovery
+Content-Type: application/json
+
+{
+  "query": "I need someone to wash my car at my home in Negombo this weekend."
+}
+
+### 14. AI Discovery: Laptop Repair near Negombo
+POST {{Service_Marketplace_API_HostAddress}}/api/ai/service-discovery
+Content-Type: application/json
+
+{
+  "query": "I need someone to repair my laptop near Negombo"
+}
+
+### 15. AI Discovery: House Cleaning in Negombo
+POST {{Service_Marketplace_API_HostAddress}}/api/ai/service-discovery
+Content-Type: application/json
+
+{
+  "query": "Need a team for deep cleaning my house in Negombo under Rs. 10000"
+}
+
+### ==============================================
+### USER PROFILE SECTIONS (PROVIDER & RECEIVER)
+### ==============================================
+
+### 16. Login User to get JWT Token
+# @name normalUserLogin
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "kamal.perera@example.com",
+  "password": "Password123!"
+}
+
+### 17. Upsert Provider Profile Section (Role 1 Marketplace User)
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/providerProfile
+Content-Type: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+{
+  "businessName": "Kamal Clean & Repair Services",
+  "bio": "Certified home cleaner and automotive technician with 5+ years experience.",
+  "experienceYears": 5,
+  "serviceRadiusKm": 25.0,
+  "coverageAreas": "Negombo, Katunayake, Ja-Ela, Kochchikade"
+}
+
+### 18. Upsert Receiver Profile Section (Role 1 Marketplace User)
+POST {{Service_Marketplace_API_HostAddress}}/api/auth/receiverProfile
+Content-Type: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+{
+  "defaultJobLocation": "123 Main Street, Negombo",
+  "preferredPaymentMethod": "Cash / Online Transfer",
+  "bioOrNotes": "Looking for reliable home maintenance and computer technicians.",
+  "serviceInterests": "Cleaning, AC Repair, Electrical, IT Support"
+}
+
+### ==============================================
+### LISTINGS & JOBS MANAGEMENT (LISTINGCONTROLLER)
+### ==============================================
+
+### 19. Create Provider Service Listing (CreateService)
+# @name createServiceListing
+POST {{Service_Marketplace_API_HostAddress}}/api/listings/createService
+Content-Type: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+{
+  "serviceVariantId": 1,
+  "startingPrice": 3500.00,
+  "priceUnit": "Per Job",
+  "description": "Professional doorstep car detailing and wash using pressure washer and microfibre towels.",
+  "supportsHomeVisit": true,
+  "tagIds": [1, 3],
+  "serviceAreaCities": ["Negombo", "Katunayake"]
+}
+
+### 20. Get My Created Services
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/myServices
+Accept: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+### 21. Delete Provider Service Listing (DeleteService)
+# Substitute the Id with an actual ID from createServiceListing response
+DELETE {{Service_Marketplace_API_HostAddress}}/api/listings/deleteService/00000000-0000-0000-0000-000000000000
+Accept: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+### 22. Create Receiver Job (CreateJob)
+# @name createReceiverJob
+POST {{Service_Marketplace_API_HostAddress}}/api/listings/createJob
+Content-Type: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+{
+  "serviceVariantId": 4,
+  "title": "Need emergency laptop repair for blue screen crash",
+  "description": "My Dell XPS laptop keeps crashing with a blue screen. Need a technician to visit and fix it urgently.",
+  "budget": 7500.00,
+  "paymentMethod": "Cash",
+  "urgencyOrPreferredDate": "Today / Urgent",
+  "tagIds": [1],
+  "jobAreas": [
+    {
+      "cityName": "Negombo",
+      "address": "123 Main Street, Negombo",
+      "latitude": 7.2008,
+      "longitude": 79.8736
+    }
+  ]
+}
+
+### 23. Search Receiver Jobs
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/searchJobs?location=Negombo
+Accept: application/json
+
+### 24. Get My Receiver Jobs
+GET {{Service_Marketplace_API_HostAddress}}/api/listings/myJobs
+Accept: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
+
+### 25. Delete Receiver Job (DeleteJob)
+# Substitute the Id with an actual ID from createReceiverJob response
+DELETE {{Service_Marketplace_API_HostAddress}}/api/listings/deleteJob/00000000-0000-0000-0000-000000000000
+Accept: application/json
+Authorization: Bearer {{normalUserLogin.response.body.data.token}}
