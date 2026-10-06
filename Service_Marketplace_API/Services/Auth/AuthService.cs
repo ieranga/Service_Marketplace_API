@@ -418,13 +418,17 @@ public class AuthService : IAuthService
             {
                 foreach (var city in dto.ServiceAreaCities.Distinct())
                 {
-                    if (!string.IsNullOrWhiteSpace(city) && !user.ServiceProfile.ServiceAreas.Any(sa => sa.CityName.Equals(city, StringComparison.OrdinalIgnoreCase)))
+                    if (!string.IsNullOrWhiteSpace(city) && !user.ServiceProfile.ServiceAreas.Any(sa => sa.CityName.Equals(city.Trim(), StringComparison.OrdinalIgnoreCase)))
                     {
-                        user.ServiceProfile.ServiceAreas.Add(new ProviderServiceArea
+                        var area = new ProviderServiceArea
                         {
+                            Id = Guid.NewGuid(),
+                            ProviderServiceProfileId = user.ServiceProfile.Id,
                             CityName = city.Trim(),
                             RadiusKm = 15
-                        });
+                        };
+                        await _context.ProviderServiceAreas.AddAsync(area);
+                        user.ServiceProfile.ServiceAreas.Add(area);
                     }
                 }
             }

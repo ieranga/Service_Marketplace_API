@@ -80,7 +80,7 @@ public class ListingService : IListingService
                 CreatedAt = DateTime.UtcNow
             };
 
-            if (dto.TagIds.Any())
+            if (dto.TagIds != null && dto.TagIds.Any())
             {
                 var validTagIds = await _context.Tags
                     .Where(t => dto.TagIds.Contains(t.Id))
@@ -91,22 +91,27 @@ public class ListingService : IListingService
                 {
                     providerService.ProviderServiceTags.Add(new ProviderServiceTag
                     {
+                        ProviderServiceId = providerService.Id,
                         TagId = tagId
                     });
                 }
             }
 
-            if (dto.ServiceAreaCities.Any())
+            if (dto.ServiceAreaCities != null && dto.ServiceAreaCities.Any())
             {
                 foreach (var city in dto.ServiceAreaCities.Distinct())
                 {
-                    if (!user.ServiceProfile.ServiceAreas.Any(sa => sa.CityName.Equals(city, StringComparison.OrdinalIgnoreCase)))
+                    if (!string.IsNullOrWhiteSpace(city) && !user.ServiceProfile.ServiceAreas.Any(sa => sa.CityName.Equals(city.Trim(), StringComparison.OrdinalIgnoreCase)))
                     {
-                        user.ServiceProfile.ServiceAreas.Add(new ProviderServiceArea
+                        var area = new ProviderServiceArea
                         {
+                            Id = Guid.NewGuid(),
+                            ProviderServiceProfileId = user.ServiceProfile.Id,
                             CityName = city.Trim(),
                             RadiusKm = 15
-                        });
+                        };
+                        await _context.ProviderServiceAreas.AddAsync(area);
+                        user.ServiceProfile.ServiceAreas.Add(area);
                     }
                 }
             }
