@@ -85,6 +85,54 @@ public static class MarketplaceDataSeeder
             }
         }
 
+        // 0.1 Seed Default Test User: user1@gmail.com
+        var demoUserId = Guid.Parse("3f53c44f-fb06-4162-9479-231dda281c7b");
+        var existingDemoUser = await context.Users
+            .Include(u => u.Profile)
+            .FirstOrDefaultAsync(u => u.Email.ToLower() == "user1@gmail.com" || u.Id == demoUserId);
+
+        if (existingDemoUser == null)
+        {
+            var demoUser = new User
+            {
+                Id = demoUserId,
+                FullName = "User1",
+                Email = "user1@gmail.com",
+                PhoneNumber = "+94760747448",
+                PasswordHash = "$2a$12$wteSHtX56laIHOjOEcGYBex.JHbfPPQHwXoTkA2vv3mGl4Mlj87Ra",
+                NIC = "23236163163",
+                Role = UserRole.User, // Role ID 1
+                Status = UserStatus.Active,
+                CreatedAt = DateTime.UtcNow,
+                Profile = new UserProfile
+                {
+                    Id = Guid.Parse("6b5d1f69-ab95-4b03-86bb-30e597158eb4"),
+                    City = "Rathnapura",
+                    Address = "Hunugalwaththa",
+                    UpdatedAt = DateTime.UtcNow
+                }
+            };
+
+            await context.Users.AddAsync(demoUser);
+
+            var demoProviderProfile = new ProviderServiceProfile
+            {
+                Id = Guid.Parse("10ac12c4-4634-46cd-af1a-e1e24138b43f"),
+                UserId = demoUserId,
+                BusinessName = "User1",
+                Bio = "Independent Service Provider",
+                IsVerified = false,
+                VerificationStatus = "Pending",
+                RatingAverage = 5.0,
+                ReviewCount = 0,
+                CompletedJobsCount = 0,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await context.ProviderServiceProfiles.AddAsync(demoProviderProfile);
+            await context.SaveChangesAsync();
+        }
+
         // 1. Seed Tags if empty
         if (!await context.Tags.AnyAsync())
         {
