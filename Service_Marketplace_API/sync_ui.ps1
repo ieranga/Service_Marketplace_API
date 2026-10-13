@@ -1,5 +1,5 @@
-$staging = "F:\Program Files\My pro\project\Developments\Service Marketplace system\Service_Marketplace_API\Service_Marketplace_API\Service_Marketplace_API\ui_staging"
-$dest = "F:\Program Files\My pro\project\Developments\Service Marketplace system\Service_Marketplace_UI\Service_Marketplace_UI"
+$staging = "F:\Program Files\My pro\project\Developments\Service Marketplace system\Service_Marketplace_API\Service_Marketplace_API\ui_staging"
+$dest = "F:\Program Files\My pro\project\Developments\Service Marketplace system\Service_Marketplace_UI"
 
 Get-ChildItem -Path $staging -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($staging.Length + 1)
