@@ -5,12 +5,13 @@ namespace Service_Marketplace_API.DTOs.AI;
 public class ServiceDiscoveryRequestDto
 {
     [Required]
-    [StringLength(500, MinimumLength = 3)]
+    [StringLength(500, MinimumLength = 2)]
     public string Query { get; set; } = string.Empty;
 
     public double? UserLatitude { get; set; }
     public double? UserLongitude { get; set; }
     public string? PreferredLocation { get; set; }
+    public decimal? MaxBudget { get; set; }
 }
 
 public class ExtractedRequirementsDto
@@ -42,22 +43,28 @@ public class MatchedProviderDto
     public Guid ProviderProfileId { get => ProviderServiceProfileId; set => ProviderServiceProfileId = value; }
     public string ProviderName { get; set; } = string.Empty;
     public string? BusinessName { get; set; }
+    public string BusinessOrProviderName => !string.IsNullOrWhiteSpace(BusinessName) ? BusinessName : ProviderName;
+
     public bool IsVerified { get; set; }
     public double RatingAverage { get; set; }
     public int ReviewCount { get; set; }
+    public int CompletedJobsCount { get; set; }
 
     public string CategoryName { get; set; } = string.Empty;
     public string ServiceName { get; set; } = string.Empty;
     public string VariantName { get; set; } = string.Empty;
+    public string ServiceVariantName => VariantName;
 
     public decimal StartingPrice { get; set; }
     public string PriceUnit { get; set; } = "Per Job";
     public bool SupportsHomeVisit { get; set; }
     public List<string> ServiceAreas { get; set; } = new();
+    public List<string> CoverageAreas => ServiceAreas;
     public List<string> MatchedTags { get; set; } = new();
 
     public double MatchScore { get; set; }
     public string MatchExplanation { get; set; } = string.Empty;
+    public string MatchReason => MatchExplanation;
 }
 
 public class ServiceDiscoveryResponseDto

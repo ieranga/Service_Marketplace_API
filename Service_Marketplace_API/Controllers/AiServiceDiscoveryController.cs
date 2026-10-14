@@ -20,6 +20,7 @@ public class AiServiceDiscoveryController : ControllerBase
     /// AI Service Discovery: Extracts structured intent and matches relevant providers from natural language.
     /// Example: "I need someone to wash my car at my home in Negombo this weekend"
     [HttpPost("discover")]
+    [HttpPost("service-discovery")]
     [ProducesResponseType(typeof(ApiResponse<ServiceDiscoveryResponseDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<ServiceDiscoveryResponseDto>), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> DiscoverServices([FromBody] ServiceDiscoveryRequestDto request)

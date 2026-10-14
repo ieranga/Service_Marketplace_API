@@ -75,12 +75,26 @@ public class AIServiceDiscoveryService : IAIServiceDiscoveryService
                 engineUsed = "Deterministic-Catalog-Fallback";
             }
 
-            // Override location if user provided an explicit preference in request (ignoring Swagger placeholder "string")
-            if (!string.IsNullOrWhiteSpace(request.PreferredLocation) && 
-                !request.PreferredLocation.Trim().Equals("string", StringComparison.OrdinalIgnoreCase) && 
-                string.IsNullOrWhiteSpace(extractedRequirements.Location))
+            // Apply preferred location from request if not already identified from the natural language query
+            if (string.IsNullOrWhiteSpace(extractedRequirements.Location) &&
+                !string.IsNullOrWhiteSpace(request.PreferredLocation) && 
+                !request.PreferredLocation.Trim().Equals("string", StringComparison.OrdinalIgnoreCase))
             {
                 extractedRequirements.Location = request.PreferredLocation.Trim();
+            }
+            else if (!string.IsNullOrWhiteSpace(request.PreferredLocation) && 
+                     !request.PreferredLocation.Trim().Equals("string", StringComparison.OrdinalIgnoreCase) &&
+                     !string.IsNullOrWhiteSpace(extractedRequirements.Location) &&
+                     !rawQuery.Contains(extractedRequirements.Location, StringComparison.OrdinalIgnoreCase))
+            {
+                // If query didn't explicitly name the extracted location, prioritize user's explicit parameter
+                extractedRequirements.Location = request.PreferredLocation.Trim();
+            }
+
+            // Override max budget if user provided explicit MaxBudget in request
+            if (request.MaxBudget.HasValue && request.MaxBudget.Value > 0)
+            {
+                extractedRequirements.MaxBudget = request.MaxBudget.Value;
             }
 
             // 4. Run matching engine
@@ -132,9 +146,9 @@ AVAILABLE SYSTEM TAGS:
 INSTRUCTIONS:
 1. Identify the user intent.
 2. Map the request to the MOST RELEVANT Category, Service, and Variant from the authoritative catalog above.
-3. If no exact Variant matches, pick the closest one or leave Variant null.
+3. If the user asks for a general service (e.g. 'computer repair' or 'pet care'), map to that service and leave variant null unless a specific variant is mentioned.
 4. Extract any matching tags from the available tags list (e.g. 'Home Visit', 'Mobile Service', 'Weekend', 'Emergency').
-5. Extract the city/location in Sri Lanka (e.g. 'Negombo', 'Colombo', 'Katana', 'Ja-Ela', 'Kandy') if mentioned.
+5. Extract the city/location in Sri Lanka (e.g. 'Rathnapura', 'Negombo', 'Colombo', 'Kandy') if mentioned.
 6. Extract the user's budget if mentioned (in numbers).
 7. Extract urgency or date timing if mentioned.
 
@@ -226,12 +240,12 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
             {
                 foreach (var cat in catalog)
                 {
-                    var s = cat.Services.FirstOrDefault(svc => svc.Name.Equals(serviceName, StringComparison.OrdinalIgnoreCase));
+                    var s = cat.Services.FirstOrDefault(svc => svc.Name.Equals(serviceName, StringComparison.OrdinalIgnoreCase) ||
+                                                               svc.Name.ToLowerInvariant().Contains(serviceName.ToLowerInvariant()));
                     if (s != null)
                     {
                         matchedCategory = cat;
                         matchedService = s;
-                        matchedVariant = s.Variants.FirstOrDefault();
                         break;
                     }
                 }
@@ -252,7 +266,7 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
                 MaxBudget = maxBudget,
                 UrgencyOrDate = urgency,
                 ConfidenceScore = confidence,
-                IsCatalogMatched = matchedVariant != null
+                IsCatalogMatched = matchedService != null || matchedVariant != null
             };
         }
         catch (Exception ex)
@@ -271,71 +285,152 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
 
         // 1. Detect tags
         var matchedTags = new List<string>();
-        if (lower.Contains("home") || lower.Contains("doorstep") || lower.Contains("house")) matchedTags.Add("Home Visit");
+        if (lower.Contains("home") || lower.Contains("doorstep") || lower.Contains("house") || lower.Contains("visit")) matchedTags.Add("Home Visit");
         if (lower.Contains("mobile") || lower.Contains("van") || lower.Contains("on-site") || lower.Contains("onsite")) matchedTags.Add("Mobile Service");
         if (lower.Contains("weekend") || lower.Contains("saturday") || lower.Contains("sunday")) matchedTags.Add("Weekend");
         if (lower.Contains("urgent") || lower.Contains("emergency") || lower.Contains("quick") || lower.Contains("now")) matchedTags.Add("Emergency");
         if (lower.Contains("today") || lower.Contains("same day")) matchedTags.Add("Same Day Service");
         if (lower.Contains("certified") || lower.Contains("expert") || lower.Contains("qualified")) matchedTags.Add("Certified Technician");
 
-        // 2. Detect common Sri Lankan locations
+        // 2. Detect Sri Lankan locations
         string? location = null;
-        var commonCities = new[] { "Negombo", "Katana", "Ja-Ela", "Kochchikade", "Katunayake", "Colombo", "Gampaha", "Kandy", "Wattala" };
+        var commonCities = new[]
+        {
+            "Rathnapura", "Ratnapura", "Colombo", "Negombo", "Kandy", "Galle", "Matara",
+            "Kurunegala", "Gampaha", "Kalutara", "Anuradhapura", "Jaffna", "Badulla",
+            "Nuwara Eliya", "Kegalle", "Trincomalee", "Batticaloa", "Matale", "Puttalam",
+            "Ampara", "Hambantota", "Monaragala", "Polonnaruwa", "Mannar", "Vavuniya",
+            "Kilinochchi", "Mullaitivu", "Katana", "Ja-Ela", "Katunayake", "Kochchikade",
+            "Wattala", "Dehiwala", "Moratuwa", "Panadura", "Mount Lavinia", "Maharagama",
+            "Kottawa", "Nugegoda", "Malabe", "Battaramulla", "Pelmadulla", "Kuruwita", "Balangoda"
+        };
+
         foreach (var city in commonCities)
         {
             if (lower.Contains(city.ToLowerInvariant()))
             {
-                location = city;
+                location = city.Equals("Ratnapura", StringComparison.OrdinalIgnoreCase) ? "Rathnapura" : city;
                 break;
             }
         }
 
-        // 3. Search catalog for best matching Variant
+        // Also check regex pattern for "near <City>" or "in <City>"
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            var locMatch = System.Text.RegularExpressions.Regex.Match(lower, @"(?:near|in|around|at)\s+([a-zA-Z\s\-]+?)(?:\s+(?:with|for|under|below|budget|and)|$)");
+            if (locMatch.Success)
+            {
+                var candidate = locMatch.Groups[1].Value.Trim();
+                if (candidate.Length > 2 && !candidate.Equals("me", StringComparison.OrdinalIgnoreCase))
+                {
+                    location = candidate;
+                }
+            }
+        }
+
+        // 3. Extract Budget parameter from natural language
+        decimal? maxBudget = null;
+        var budgetMatch = System.Text.RegularExpressions.Regex.Match(lower, @"(?:budget|price|max|under|below|rs\.?|lkr)\s*[:=]?\s*([0-9]{3,7})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!budgetMatch.Success)
+        {
+            budgetMatch = System.Text.RegularExpressions.Regex.Match(lower, @"([0-9]{3,7})\s*(?:lkr|rs|rupees)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+        if (budgetMatch.Success && decimal.TryParse(budgetMatch.Groups[1].Value, out var parsedBudget))
+        {
+            maxBudget = parsedBudget;
+        }
+
+        // 4. Match Catalog Category, Service, and Variant
         Category? matchedCat = null;
         ServiceEntity? matchedSvc = null;
         ServiceVariant? matchedVar = null;
 
-        // Specific keyword heuristics for common services
-        if (lower.Contains("car wash") || lower.Contains("wash my car") || lower.Contains("wash car") || lower.Contains("clean my car"))
+        // Computer Repair
+        if (lower.Contains("computer") || lower.Contains("laptop") || lower.Contains("pc") || lower.Contains("desktop") || lower.Contains("windows installation"))
         {
-            FindCatalogHierarchy(catalog, "Transportation", "Vehicle Cleaning", "Car Washing", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Mechanical", "Computer Repair", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("laptop") || lower.Contains("notebook"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase));
+            else if (lower.Contains("desktop") || lower.Contains("pc troubleshoot"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Desktop", StringComparison.OrdinalIgnoreCase));
+            else if (lower.Contains("os") || lower.Contains("windows") || lower.Contains("software install"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("OS", StringComparison.OrdinalIgnoreCase));
         }
-        else if (lower.Contains("laptop") || lower.Contains("notebook repair") || lower.Contains("screen broken"))
+        // Pet Care
+        else if (lower.Contains("pet") || lower.Contains("dog") || lower.Contains("cat") || lower.Contains("puppy") || lower.Contains("kitten") || lower.Contains("grooming") || lower.Contains("pet sitting"))
         {
-            FindCatalogHierarchy(catalog, "Mechanical", "Computer Repair", "Laptop Repair", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Caring", "Pet Care", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("groom") || lower.Contains("bath") || lower.Contains("fur"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Grooming", StringComparison.OrdinalIgnoreCase));
+            else if (lower.Contains("sitting") || lower.Contains("board") || lower.Contains("walk"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Sitting", StringComparison.OrdinalIgnoreCase));
         }
-        else if (lower.Contains("pc") || lower.Contains("desktop") || lower.Contains("computer"))
+        // Vehicle Cleaning / Car Wash
+        else if (lower.Contains("car wash") || lower.Contains("wash my car") || lower.Contains("wash car") || lower.Contains("vehicle clean") || lower.Contains("detailing"))
         {
-            FindCatalogHierarchy(catalog, "Mechanical", "Computer Repair", "Desktop PC Troubleshooting", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Transportation", "Vehicle Cleaning", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("detail"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Detailing", StringComparison.OrdinalIgnoreCase));
+            else if (lower.Contains("bike") || lower.Contains("motorbike"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Motorbike", StringComparison.OrdinalIgnoreCase));
+            else
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Car Washing", StringComparison.OrdinalIgnoreCase));
         }
-        else if (lower.Contains("house clean") || lower.Contains("clean my house") || lower.Contains("deep clean"))
+        // House Cleaning
+        else if (lower.Contains("house clean") || lower.Contains("clean my house") || lower.Contains("deep clean") || lower.Contains("sofa") || lower.Contains("carpet"))
         {
-            FindCatalogHierarchy(catalog, "Cleaning", "House Cleaning", "Deep House Cleaning", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Cleaning", "House Cleaning", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("sofa") || lower.Contains("carpet"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Sofa", StringComparison.OrdinalIgnoreCase));
+            else
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Deep", StringComparison.OrdinalIgnoreCase));
         }
-        else if (lower.Contains("grass") || lower.Contains("lawn") || lower.Contains("garden"))
+        // Garden Cleaning
+        else if (lower.Contains("grass") || lower.Contains("lawn") || lower.Contains("garden") || lower.Contains("tree"))
         {
-            FindCatalogHierarchy(catalog, "Cleaning", "Garden Cleaning", "Grass Cutting", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Cleaning", "Garden Cleaning", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("tree"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Tree", StringComparison.OrdinalIgnoreCase));
+            else
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Grass", StringComparison.OrdinalIgnoreCase));
         }
+        // Meal Catering
+        else if (lower.Contains("food") || lower.Contains("meal") || lower.Contains("catering") || lower.Contains("lunch"))
+        {
+            FindCatalogHierarchy(catalog, "Food Preparation", "Meal Catering", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("lunch") || lower.Contains("pack"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Lunch", StringComparison.OrdinalIgnoreCase));
+            else
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Party", StringComparison.OrdinalIgnoreCase));
+        }
+        // Software Development
         else if (lower.Contains("software") || lower.Contains("developer") || lower.Contains("website") || lower.Contains("app development") || lower.Contains("web development"))
         {
-            FindCatalogHierarchy(catalog, "Digital & Professional", "Software Development", "Web Application Development", out matchedCat, out matchedSvc, out matchedVar);
+            FindCatalogHierarchy(catalog, "Digital & Professional", "Software Development", null, out matchedCat, out matchedSvc, out _);
+            if (lower.Contains("wordpress"))
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("WordPress", StringComparison.OrdinalIgnoreCase));
+            else
+                matchedVar = matchedSvc?.Variants.FirstOrDefault(v => v.Name.Contains("Web", StringComparison.OrdinalIgnoreCase));
         }
         else
         {
-            // General scan across all variants (filtering out generic stop words like 'service', 'repair')
-            var stopWords = new HashSet<string> { "service", "services", "repair", "repairs", "need", "needs", "only", "please", "want", "someone" };
+            // General scan across all catalog services and variants
             foreach (var cat in catalog)
             {
+                if (lower.Contains(cat.Name.ToLowerInvariant()))
+                {
+                    matchedCat = cat;
+                }
                 foreach (var s in cat.Services)
                 {
+                    if (lower.Contains(s.Name.ToLowerInvariant()))
+                    {
+                        matchedCat = cat;
+                        matchedSvc = s;
+                    }
                     foreach (var v in s.Variants)
                     {
-                        var vLower = v.Name.ToLowerInvariant();
-                        var meaningfulWords = vLower.Split(' ')
-                            .Where(w => w.Length > 3 && !stopWords.Contains(w))
-                            .ToList();
-
-                        if (lower.Contains(vLower) || (meaningfulWords.Any() && meaningfulWords.All(w => lower.Contains(w))))
+                        if (lower.Contains(v.Name.ToLowerInvariant()))
                         {
                             matchedCat = cat;
                             matchedSvc = s;
@@ -349,10 +444,16 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
             }
         }
 
+        string detectedIntent;
+        if (matchedVar != null) detectedIntent = $"{matchedVar.Name} Request";
+        else if (matchedSvc != null) detectedIntent = $"{matchedSvc.Name} Request";
+        else if (matchedCat != null) detectedIntent = $"{matchedCat.Name} Service Request";
+        else detectedIntent = "General Marketplace Service Request";
+
         return new ExtractedRequirementsDto
         {
             RawQuery = rawQuery,
-            DetectedIntent = matchedVar != null ? $"{matchedVar.Name} Request" : "General Service Search",
+            DetectedIntent = detectedIntent,
             CategoryId = matchedCat?.Id,
             CategoryName = matchedCat?.Name,
             ServiceId = matchedSvc?.Id,
@@ -361,8 +462,9 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
             VariantName = matchedVar?.Name,
             ExtractedTags = matchedTags,
             Location = location,
-            ConfidenceScore = matchedVar != null ? 0.85 : 0.50,
-            IsCatalogMatched = matchedVar != null
+            MaxBudget = maxBudget,
+            ConfidenceScore = matchedVar != null ? 0.95 : (matchedSvc != null ? 0.90 : 0.70),
+            IsCatalogMatched = matchedSvc != null || matchedVar != null
         };
     }
 
@@ -370,13 +472,15 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
         List<Category> catalog,
         string categoryName,
         string serviceName,
-        string variantName,
+        string? variantName,
         out Category? cat,
         out ServiceEntity? svc,
         out ServiceVariant? vr)
     {
         cat = catalog.FirstOrDefault(c => c.Name.Equals(categoryName, StringComparison.OrdinalIgnoreCase));
         svc = cat?.Services.FirstOrDefault(s => s.Name.Equals(serviceName, StringComparison.OrdinalIgnoreCase));
-        vr = svc?.Variants.FirstOrDefault(v => v.Name.Equals(variantName, StringComparison.OrdinalIgnoreCase));
+        vr = !string.IsNullOrWhiteSpace(variantName)
+            ? svc?.Variants.FirstOrDefault(v => v.Name.Equals(variantName, StringComparison.OrdinalIgnoreCase))
+            : null;
     }
 }
