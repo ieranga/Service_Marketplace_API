@@ -75,8 +75,63 @@ public class MarketplaceMatchingService : IMarketplaceMatchingService
                 candidates = await relaxedQuery.ToListAsync();
             }
 
+            // Direct [ProviderServices] database search: if still 0 candidates, match keywords directly against active rows in [ProviderServices]
+            if (candidates.Count == 0 && !string.IsNullOrWhiteSpace(requirements.RawQuery))
+            {
+                var queryTerms = requirements.RawQuery
+                    .Split(new[] { ' ', ',', '.', '?', '!', ';', ':' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(w => w.Length > 2)
+                    .Select(w => w.ToLowerInvariant())
+                    .Where(w => !new[] { "give", "find", "need", "near", "with", "from", "show", "please", "service", "services", "want", "some", "like" }.Contains(w))
+                    .ToList();
+
+                if (queryTerms.Any())
+                {
+                    var dbQuery = _context.ProviderServices
+                        .Where(ps => ps.IsActive)
+                        .Include(ps => ps.ProviderServiceProfile).ThenInclude(p => p!.User)
+                        .Include(ps => ps.ProviderServiceProfile).ThenInclude(p => p!.ServiceAreas)
+                        .Include(ps => ps.ServiceVariant).ThenInclude(v => v!.Service).ThenInclude(s => s!.Category)
+                        .Include(ps => ps.ProviderServiceTags).ThenInclude(pst => pst.Tag)
+                        .AsQueryable();
+
+                    if (requirements.MaxBudget.HasValue && requirements.MaxBudget.Value > 0)
+                    {
+                        dbQuery = dbQuery.Where(ps => ps.StartingPrice <= requirements.MaxBudget.Value);
+                    }
+
+                    var allActive = await dbQuery.ToListAsync();
+
+                    candidates = allActive
+                        .Where(ps => queryTerms.Any(term =>
+                            (ps.ServiceVariant != null && ps.ServiceVariant.Name.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                            (ps.ServiceVariant?.Service != null && ps.ServiceVariant.Service.Name.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                            (!string.IsNullOrEmpty(ps.Description) && ps.Description.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                            (ps.ProviderServiceProfile?.BusinessName != null && ps.ProviderServiceProfile.BusinessName.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                            ps.ProviderServiceTags.Any(pst => pst.Tag != null && pst.Tag.Name.Contains(term, StringComparison.OrdinalIgnoreCase))
+                        ))
+                        .ToList();
+                }
+            }
+
             var normalizedLocation = requirements.Location?.Trim().ToLowerInvariant();
             if (normalizedLocation == "ratnapura") normalizedLocation = "rathnapura";
+            if (normalizedLocation == "mathara") normalizedLocation = "matara";
+
+            // Strict Budget Enforcement: exclude any candidates exceeding MaxBudget
+            if (requirements.MaxBudget.HasValue && requirements.MaxBudget.Value > 0)
+            {
+                candidates = candidates.Where(ps => ps.StartingPrice <= requirements.MaxBudget.Value).ToList();
+            }
+
+            // Strict Location Enforcement: if user specified a location, exclude candidates that do not cover that location
+            if (!string.IsNullOrWhiteSpace(normalizedLocation))
+            {
+                candidates = candidates
+                    .Where(ps => ps.ProviderServiceProfile != null && 
+                                 ps.ProviderServiceProfile.ServiceAreas.Any(sa => IsLocationMatch(sa.CityName, normalizedLocation)))
+                    .ToList();
+            }
 
             var targetTags = requirements.ExtractedTags.Select(t => t.Trim().ToLowerInvariant()).ToList();
             var results = new List<MatchedProviderDto>();
@@ -110,12 +165,7 @@ public class MarketplaceMatchingService : IMarketplaceMatchingService
 
                 if (!string.IsNullOrWhiteSpace(normalizedLocation))
                 {
-                    locationMatched = coveredAreas.Any(ca => 
-                    {
-                        var caNorm = ca.ToLowerInvariant();
-                        if (caNorm == "ratnapura") caNorm = "rathnapura";
-                        return caNorm.Contains(normalizedLocation) || normalizedLocation.Contains(caNorm);
-                    });
+                    locationMatched = coveredAreas.Any(ca => IsLocationMatch(ca, normalizedLocation));
 
                     if (locationMatched)
                     {
@@ -124,13 +174,8 @@ public class MarketplaceMatchingService : IMarketplaceMatchingService
                     }
                     else if (coveredAreas.Any(ca => ca.ToLowerInvariant().Contains("islandwide") || ca.ToLowerInvariant().Contains("all island")))
                     {
-                        score += 15.0;
+                        score += 20.0;
                         explanationParts.Add("offers Islandwide coverage");
-                    }
-                    else
-                    {
-                        score -= 5.0;
-                        explanationParts.Add($"based in {string.Join(", ", coveredAreas)}");
                     }
                 }
                 else
@@ -208,36 +253,69 @@ public class MarketplaceMatchingService : IMarketplaceMatchingService
             }
 
             // PRIMARY SORTING ORDER:
-            // 1. Location match (if location was requested, providers covering the location come first)
-            // 2. StartingPrice ascending (lowest price first - "first 10 services based on price")
-            // 3. MatchScore descending
-            // 4. Take top 10
-            IEnumerable<MatchedProviderDto> sortedResults;
-            if (!string.IsNullOrWhiteSpace(normalizedLocation))
-            {
-                sortedResults = results
-                    .OrderByDescending(r => r.ServiceAreas.Any(sa => 
-                    {
-                        var saNorm = sa.ToLowerInvariant();
-                        if (saNorm == "ratnapura") saNorm = "rathnapura";
-                        return saNorm.Contains(normalizedLocation) || normalizedLocation.Contains(saNorm);
-                    }))
-                    .ThenBy(r => r.StartingPrice)
-                    .ThenByDescending(r => r.MatchScore);
-            }
-            else
-            {
-                sortedResults = results
-                    .OrderBy(r => r.StartingPrice)
-                    .ThenByDescending(r => r.MatchScore);
-            }
+            // 1. StartingPrice ascending (lowest price first - "first 10 services based on price")
+            // 2. MatchScore descending
+            // 3. Take top 10
+            var sortedResults = results
+                .OrderBy(r => r.StartingPrice)
+                .ThenByDescending(r => r.MatchScore)
+                .Take(10)
+                .ToList();
 
-            return sortedResults.Take(10).ToList();
+            return sortedResults;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error matching providers for requirements.");
             return new List<MatchedProviderDto>();
         }
+    }
+
+    private static bool IsLocationMatch(string? candidateArea, string requestedLocation)
+    {
+        if (string.IsNullOrWhiteSpace(candidateArea) || string.IsNullOrWhiteSpace(requestedLocation))
+            return false;
+
+        var area = candidateArea.Trim().ToLowerInvariant();
+        var target = requestedLocation.Trim().ToLowerInvariant();
+
+        // Standardize common Sri Lankan alternate spellings
+        if (area.Contains("ratnapura")) area = area.Replace("ratnapura", "rathnapura");
+        if (target.Contains("ratnapura")) target = target.Replace("ratnapura", "rathnapura");
+
+        if (area.Contains("mathara")) area = area.Replace("mathara", "matara");
+        if (target.Contains("mathara")) target = target.Replace("mathara", "matara");
+
+        // Islandwide / All-island services cover every location
+        if (area.Contains("islandwide") || area.Contains("all island") || area.Contains("island wide") || area.Contains("countrywide"))
+        {
+            return true;
+        }
+
+        // Direct containment check (e.g. "Colombo port city" contains "colombo")
+        if (area.Contains(target) || target.Contains(area))
+        {
+            return true;
+        }
+
+        // Colombo Metropolitan Suburbs mapping
+        var colomboSuburbs = new[]
+        {
+            "colombo", "colombo port city", "colombo fort", "dehiwala", "mount lavinia",
+            "moratuwa", "nugegoda", "maharagama", "kottawa", "battaramulla", "rajagiriya",
+            "kaduwela", "kolonnawa", "wattala", "peliyagoda", "kelaniya"
+        };
+
+        if (target == "colombo" && colomboSuburbs.Any(s => area.Contains(s)))
+        {
+            return true;
+        }
+
+        if (colomboSuburbs.Contains(target) && area.Contains("colombo"))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

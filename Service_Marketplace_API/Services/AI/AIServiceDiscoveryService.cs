@@ -72,7 +72,7 @@ public class AIServiceDiscoveryService : IAIServiceDiscoveryService
             if (extractedRequirements == null)
             {
                 extractedRequirements = PerformDeterministicCatalogMatch(rawQuery, catalog, availableTags);
-                engineUsed = "Deterministic-Catalog-Fallback";
+                engineUsed = "System-Database-Engine";
             }
 
             // Apply preferred location from request if not already identified from the natural language query
@@ -135,9 +135,10 @@ public class AIServiceDiscoveryService : IAIServiceDiscoveryService
         var tagsList = string.Join(", ", tags.Select(t => $"\"{t}\""));
 
         return $@"You are the AI Service Discovery Agent for an AI-Powered Service Marketplace in Sri Lanka.
-Your job is to understand the user's natural language request and extract structured requirements grounded STRICTLY in our authoritative marketplace catalog.
+Your job is to understand the user's natural language request and extract structured requirements grounded STRICTLY in our authoritative internal marketplace catalog.
+DO NOT suggest, return, or invent any external services or providers. All service data is retrieved exclusively from the internal system database [ProviderServices].
 
-AUTHORITATIVE CATALOG HIERARCHY:
+AUTHORITATIVE CATALOG HIERARCHY (From System DB):
 {string.Join("\n", catalogSummary)}
 
 AVAILABLE SYSTEM TAGS:
@@ -330,14 +331,31 @@ You MUST respond ONLY with a valid JSON object matching this exact schema:
 
         // 3. Extract Budget parameter from natural language
         decimal? maxBudget = null;
-        var budgetMatch = System.Text.RegularExpressions.Regex.Match(lower, @"(?:budget|price|max|under|below|rs\.?|lkr)\s*[:=]?\s*([0-9]{3,7})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var budgetMatch = System.Text.RegularExpressions.Regex.Match(
+            lower,
+            @"(?:budget|price|cost|max|under|below|around|within|up to|at)\s+(?:of\s+|about\s+|is\s+)?(?:rs\.?|lkr)?\s*[:=]?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{3,7})",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         if (!budgetMatch.Success)
         {
-            budgetMatch = System.Text.RegularExpressions.Regex.Match(lower, @"([0-9]{3,7})\s*(?:lkr|rs|rupees)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            budgetMatch = System.Text.RegularExpressions.Regex.Match(
+                lower,
+                @"(?:rs\.?|lkr)\s*[:=]?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{3,7})",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         }
-        if (budgetMatch.Success && decimal.TryParse(budgetMatch.Groups[1].Value, out var parsedBudget))
+        if (!budgetMatch.Success)
         {
-            maxBudget = parsedBudget;
+            budgetMatch = System.Text.RegularExpressions.Regex.Match(
+                lower,
+                @"([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{3,7})\s*(?:lkr|rs|rupees)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+        if (budgetMatch.Success)
+        {
+            var rawDigits = budgetMatch.Groups[1].Value.Replace(",", "").Trim();
+            if (decimal.TryParse(rawDigits, out var parsedBudget))
+            {
+                maxBudget = parsedBudget;
+            }
         }
 
         // 4. Match Catalog Category, Service, and Variant
